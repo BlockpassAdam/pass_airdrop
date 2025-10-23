@@ -1,74 +1,137 @@
-# **PASS Token Airdrop (On-Chain Validation)**
+# **PASS Token Airdrop (Simple On-Chain Validation)**
 
-This project implements an airdrop system for distributing PASS tokens. This version uses **on-chain validation**, meaning the smart contract directly checks the BSC Attestation Service (BAS) to verify a user's eligibility when they try to claim.
+This project implements a simple, one-time airdrop system for distributing PASS tokens. This version uses **on-chain validation** to verify a user's eligibility when they try to claim.
 
-This approach is different from a Merkle tree as it does not require any off-chain proof generation. The eligibility check happens live during the claim transaction.
+This version is simplified and **does not** include any monthly caps, tapering rewards, or claim periods. The only rule is: **one claim per attested address, ever.**
 
 ## **Project Components**
 
-1. **AirdropOnChain.sol**: The Solidity smart contract that lives on the blockchain. It holds the tokens, checks user attestations, and distributes the tokens.  
-2. **index-on-chain.html**: A front-end "dApp" (Decentralized Application) that allows eligible users to connect their wallets and claim their tokens.
+1. **AirdropSimple.sol**: The Solidity smart contract that lives on the blockchain. It holds the tokens, checks user attestations, and distributes the tokens.  
+2. **index-simple.html**: A front-end "dApp" (Decentralized Application) that allows eligible users to connect their wallets and claim their tokens. This dApp is network-aware and supports both BSC Mainnet and Testnet.
 
 ## **How It Works**
 
-1. **On-Chain**: The project owner deploys the AirdropOnChain.sol contract. During deployment, the owner provides the contract with:  
-   * The PASS Token address.  
-   * The BAS Registry contract address.  
-   * The schemaId for the "Human" attestation.  
-   * The monthly token payout cap.  
-   * The initial claim amount (e.g., 50 tokens).  
-2. **On-Chain**: The owner transfers the airdrop tokens into the deployed contract.  
-3. **On-Chain**: A user (who holds the "Human" attestation) visits the index-on-chain.html dApp.  
-4. **On-Chain**: The user connects their wallet and clicks "Claim Your Tokens".  
-5. **On-Chain**: This calls the claim() function on the smart contract. The contract performs these checks *live*:  
+1. **On-Chain**: The project owner deploys the AirdropSimple.sol contract **twice**: once to BSC Mainnet and once to BSC Testnet.  
+2. **On-Chain**: The owner transfers the airdrop tokens into *each* deployed contract (real tokens for Mainnet, test tokens for Testnet).  
+3. **Off-Chain**: The owner edits index-simple.html to add the two new contract addresses.  
+4. **On-Chain**: A user visits the index-simple.html dApp.  
+5. **On-Chain**: The dApp prompts the user to connect their wallet and checks their network (Mainnet or Testnet).  
+6. **On-Chain**: The user clicks "Claim Your Tokens".  
+7. **On-Chain**: This calls the claim() function on the correct smart contract. The contract performs these checks *live*:  
    1. Calls the BAS Registry contract to ask, "Does this user (msg.sender) have the humanSchemaId attestation?"  
-   2. Checks if the user has already claimed in the current period.  
-   3. Checks if the monthly payout cap has been exceeded.  
-6. **On-Chain**: If all checks pass, the contract transfers the currentClaimAmount of PASS tokens to the user.
+   2. Checks the hasClaimed mapping: "Has this user (msg.sender) already claimed?"  
+8. **On-Chain**: If the user is attested AND has not claimed, the contract sends the fixed CLAIM\_AMOUNT of PASS tokens and marks the user as claimed.
 
 ## **Project Components**
 
-### **1\. AirdropOnChain.sol (Smart Contract)**
+### **1\. AirdropSimple.sol (Smart Contract)**
 
-This is the on-chain "vault" and rule-keeper.
+This is the simplified on-chain "vault" and rule-keeper.
 
 **Key Features:**
 
 * **BAS Integration**: Directly calls the isAttested function on the official BAS Registry contract.  
-* **Owner-Managed**: Key functions are restricted to the owner.  
-* **claim()**: The main function for users. It takes *no arguments* and validates eligibility on-chain.  
-* **Monthly Payout Limit**: Enforces the monthly cap (e.g., 50,000 PASS) to ensure token stability.  
-* **Tapering Rewards**: The owner can call updateClaimPeriod(newAmount) to move to the next "month" and set a new, lower reward amount (e.g., 50, then 25, then 12.5 tokens), matching the original project specification.
+* **One-Time Claim**: Uses a simple mapping(address \=\> bool) public hasClaimed to ensure each address can only claim once.  
+* **Fixed Reward**: A single, constant CLAIM\_AMOUNT is set at deployment.  
+* **Owner-Managed**: The owner can withdraw any leftover tokens after the campaign.
 
 **How to Deploy:**
 
 1. Install dependencies (if using a framework like Hardhat): npm install @openzeppelin/contracts  
 2. Compile the contract using a tool like Hardhat, Foundry, or Remix.  
-3. Deploy to the BSC network, passing these arguments to the constructor:  
-   * \_tokenAddress: The address of the PASS ERC20 token.  
-   * \_basRegistryAddress: The BAS Registry address.  
-     * **Mainnet:** 0x085105151557a6908EAD812053A4700f13d8032e  
-     * **Testnet:** 0x242D13567d1C2293311E6a9A3f26D07F81393669  
-   * \_humanSchemaId: The schema ID you provided.  
-     * 0x43e35dc52f67fcde0aafd02b05637e1986242c239ed0bab1bc6ef698ff511539  
-   * \_monthlyPayoutLimit: The limit in *wei* (e.g., 50000 \+ 18 zeros for 50,000 tokens).  
-   * \_initialClaimAmount: The reward for Period 1 (e.g., 50 \+ 18 zeros for 50 tokens).  
-4. **CRITICAL**: After deployment, transfer the total supply of airdrop tokens (or at least the monthly cap) *to the deployed contract address*.
+3. **Deploy to BSC Testnet** (ChainID 97), passing these arguments:  
+   * \_tokenAddress: The address of the **Testnet** PASS ERC20 token.  
+   * \_basRegistryAddress: The **Testnet** BAS Registry: 0x242D13567d1C2293311E6a9A3f26D07F81393669  
+   * \_humanSchemaId: 0x43e35dc52f67fcde0aafd02b05637e1986242c239ed0bab1bc6ef698ff511539  
+   * \_claimAmount: The fixed reward in *wei* (e.g., 50000000000000000000 for 50 tokens).  
+4. **Deploy to BSC Mainnet** (ChainID 56), passing these arguments:  
+   * \_tokenAddress: 0xe1F07dDeC3DC807a8861396E1c849E5612c8eD57 (The official PASS Token)  
+   * \_basRegistryAddress: The **Mainnet** BAS Registry: 0x085105151557a6908EAD812053A4700f13d8032e  
+   * \_humanSchemaId: 0x43e35dc52f67fcde0aafd02b05637e1986242c239ed0bab1bc6ef698ff511539  
+   * \_claimAmount: The fixed reward in *wei* (e.g., 50000000000000000000 for 50 tokens).  
+5. **CRITICAL**: After deployment, transfer the total supply of airdrop tokens *to each* of the newly deployed contract addresses on their respective networks.
 
-### **2\. index-on-chain.html (Claiming dApp)**
+### **2\. index-simple.html (Claiming dApp)**
 
-This is the user-facing website.
+This is the user-facing website, updated for the simple contract.
 
 **How to Use:**
 
-1. **Edit the file**: Open index-on-chain.html and find this line:  
-   const contractAddress \= "0x...YOUR\_NEW\_CONTRACT\_ADDRESS\_HERE";
+1. **Edit the file**: Open index-simple.html and find the networkConfigs object:  
+   const networkConfigs \= {  
+       '56': { // BSC Mainnet  
+           // ...  
+           contractAddress: '0x...YOUR\_MAINNET\_CONTRACT\_ADDRESS\_HERE',  
+           // ...  
+       },  
+       '97': { // BSC Testnet  
+           // ...  
+           contractAddress: '0x...YOUR\_TESTNET\_CONTRACT\_ADDRESS\_HERE',  
+           // ...  
+       }  
+   };
 
-   Replace the placeholder with the *actual address* of your deployed AirdropOnChain.sol contract.  
-2. **Host the file**: You can open this file directly in your browser or host it on any static website provider (like GitHub Pages, Netlify, or Vercel).  
-3. **User Flow**:  
-   * A user visits the page and clicks "Connect Wallet".  
-   * The dApp will show them the current claim amount.  
-   * The user clicks "Claim Your Tokens".  
-   * MetaMask (or another wallet) pops up, asking them to approve the transaction.  
-   * If their attestation is valid (and they haven't claimed), the transaction succeeds. If not, the contract will revert and the dApp will show an error (e.g., "Airdrop: Not attested").
+   Replace the placeholder addresses with the *actual addresses* of your deployed AirdropSimple.sol contracts.  
+2. **Host the file**: You can open this file directly in your browser or host it on any static website provider.
+
+## **How to Verify & Test on BSCScan**
+
+### **Part 1: Contract Verification (with Hardhat)**
+
+**1-2. Get API Key & Install Plugin** (Same as before)
+
+3\. Configure hardhat.config.js  
+Make sure your solidity.version matches the one in the contract (0.8.19).  
+require("@nomicfoundation/hardhat-verify");
+
+module.exports \= {  
+  solidity: {  
+    version: "0.8.19", // This MUST match the version in your contract  
+    settings: {  
+      optimizer: {  
+        enabled: true,  
+        runs: 200,  
+      },  
+    },  
+  },  
+  // ... (networks config) ...  
+  etherscan: {  
+    apiKey: {  
+      bsc: "YOUR\_BSCSCAN\_API\_KEY\_HERE",  
+      bscTestnet: "YOUR\_BSCSCAN\_API\_KEY\_HERE"  
+    }  
+  }  
+};
+
+4\. Run the Verification Command  
+After you deploy, run this command. Note the constructor arguments are now simpler.  
+\# Example for Testnet:  
+npx hardhat verify \--network bscTestnet YOUR\_DEPLOYED\_CONTRACT\_ADDRESS \\  
+  "TESTNET\_TOKEN\_ADDRESS" \\  
+  "0x242D13567d1C2293311E6a9A3f26D07F81393669" \\  
+  "0x43e35dc52f67fcde0aafd02b05637e1986242c239ed0bab1bc6ef698ff511539" \\  
+  "50000000000000000000"
+
+\# Example for Mainnet:  
+npx hardhat verify \--network bscMainnet YOUR\_DEPLOYED\_CONTRACT\_ADDRESS \\  
+  "0xe1F07dDeC3DC807a8861396E1c849E5612c8eD57" \\  
+  "0x085105151557a6908EAD812053A4700f13d8032e" \\  
+  "0x43e35dc52f67fcde0aafd02b05637e1986242c239ed0bab1c6ef698ff511539" \\  
+  "50000000000000000000"
+
+### **Part 2: Testing Directly on BSCScan (After Verification)**
+
+1. **Go to Your Contract**: Open your contract's address on BSCScan.  
+2. **Find the "Contract" Tab**: Click it.  
+3. **Use "Read Contract"**:  
+   * Click the "Read Contract" button.  
+   * You can check CLAIM\_AMOUNT to see the reward.  
+   * You can enter your wallet address into hasClaimed (enter your address and click "Query") to see if it returns true or false.  
+4. **Use "Write Contract" to Claim**:  
+   * Click the "Write Contract" button.  
+   * Click **"Connect to Web3"**.  
+   * Scroll down to the claim function.  
+   * Click the **"Write"** button.  
+   * Approve the transaction in your wallet.
+
+If you are attested and haven't claimed, it will succeed. If you try again, it will fail with the error Airdrop: Already claimed.

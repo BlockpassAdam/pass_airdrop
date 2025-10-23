@@ -30,27 +30,50 @@
 
     <div class="bg-gray-800 p-6 sm:p-8 rounded-2xl shadow-xl w-full max-w-lg">
         <h1 class="text-3xl font-bold text-center mb-2 text-blue-400">PASS Token Airdrop</h1>
-        <p class="text-center text-gray-400 mb-6">
+        <p class="text-center text-gray-400 mb-6" id="app-subtitle">
             Holders of the "Human" attestation can claim PASS tokens here.
         </p>
 
         <div id="message-box" class="hidden p-3 rounded-lg mb-4 text-center"></div>
 
-        <div id="wallet-disconnected" class="">
+        <!-- Initial state: Wallet not connected -->
+        <div id="wallet-disconnected">
             <button id="connect-button"
                 class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
                 Connect Wallet
             </button>
         </div>
 
+        <!-- State: Wallet connected, but on wrong network -->
+        <div id="wrong-network" class="hidden text-center space-y-4">
+            <p class="font-semibold text-red-400">Wrong Network Detected</p>
+            <p class="text-gray-300">Please switch your wallet to one of the supported networks:</p>
+            <div class="flex flex-col sm:flex-row gap-4">
+                <button id="switch-mainnet-button" data-chain-id="56"
+                    class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300">
+                    Switch to BSC Mainnet
+                </button>
+                <button id="switch-testnet-button" data-chain-id="97"
+                    class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300">
+                    Switch to BSC Testnet
+                </button>
+            </div>
+        </div>
+
+        <!-- State: Wallet connected and on correct network -->
         <div id="wallet-connected" class="hidden space-y-4">
-            <p class="text-center text-sm">
-                Connected: <strong id="wallet-address" class="text-green-400 break-all"></strong>
-            </p>
+            <div class="text-center text-sm">
+                <p>
+                    Connected: <strong id="wallet-address" class="text-green-400 break-all"></strong>
+                </p>
+                <p>
+                    Network: <strong id="network-name" class="text-yellow-400"></strong>
+                </p>
+            </div>
 
             <p class="text-gray-300 text-center">
-                Click the button below to claim your tokens. The contract will
-                automatically verify your attestation.
+                Click the button below to claim your one-time token airdrop.
+                The contract will automatically verify your attestation.
             </p>
 
             <button id="claim-button"
@@ -64,14 +87,35 @@
 
     <script>
         // --- Contract & App Configuration ---
-        // !! IMPORTANT: Replace with your deployed contract address
-        const contractAddress = "0x...YOUR_NEW_CONTRACT_ADDRESS_HERE";
+        
+        // !! IMPORTANT: Add your deployed contract addresses here
+        const networkConfigs = {
+            '56': { // BSC Mainnet
+                chainId: '0x38', // Hex
+                chainName: 'BNB Smart Chain (Mainnet)',
+                contractAddress: '0x...YOUR_MAINNET_CONTRACT_ADDRESS_HERE',
+                nativeCurrency: { name: 'BNB', decimals: 18, symbol: 'BNB' },
+                rpcUrls: ['https://bsc-dataseed.binance.org/'],
+                blockExplorerUrls: ['https://bscscan.com']
+            },
+            '97': { // BSC Testnet
+                chainId: '0x61', // Hex
+                chainName: 'BNB Smart Chain (Testnet)',
+                contractAddress: '0x...YOUR_TESTNET_CONTRACT_ADDRESS_HERE',
+                nativeCurrency: { name: 'tBNB', decimals: 18, symbol: 'tBNB' },
+                rpcUrls: ['https://data-seed-prebsc-1-s1.binance.org:8545/'],
+                blockExplorerUrls: ['https://testnet.bscscan.com']
+            }
+        };
 
-        // Minimal ABI from your new contract
+        const supportedChainIds = Object.keys(networkConfigs);
+
+        // Minimal ABI from your new SIMPLE contract
         const contractABI = [
-            "event Claim(address indexed user, uint256 amount, uint256 period)",
+            "event Claim(address indexed user, uint256 amount)",
             "function claim()",
-            "function currentClaimAmount() view returns (uint256)"
+            "function CLAIM_AMOUNT() view returns (uint256)",
+            "function hasClaimed(address) view returns (bool)"
         ];
 
         // --- DOM Elements ---
@@ -82,14 +126,22 @@
         
         const disconnectedDiv = document.getElementById('wallet-disconnected');
         const connectedDiv = document.getElementById('wallet-connected');
+        const wrongNetworkDiv = document.getElementById('wrong-network');
+
         const walletAddressEl = document.getElementById('wallet-address');
+        const networkNameEl = document.getElementById('network-name');
         const messageBox = document.getElementById('message-box');
+        const appSubtitle = document.getElementById('app-subtitle');
+
+        const switchMainnetButton = document.getElementById('switch-mainnet-button');
+        const switchTestnetButton = document.getElementById('switch-testnet-button');
 
         // --- App State ---
         let provider;
         let signer;
         let contract;
         let userAddress;
+        let currentNetworkConfig;
 
         // --- Helper Functions ---
         
@@ -123,16 +175,51 @@
             }
         }
 
-        function updateUI(address) {
-            userAddress = address;
-            if (address) {
-                disconnectedDiv.classList.add('hidden');
-                connectedDiv.classList.remove('hidden');
-                walletAddressEl.textContent = `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
-            } else {
+        function updateUI(state, data) {
+            // Hide all sections first
+            disconnectedDiv.classList.add('hidden');
+            connectedDiv.classList.add('hidden');
+            wrongNetworkDiv.classList.add('hidden');
+            hideMessage();
+
+            if (state === 'disconnected') {
                 disconnectedDiv.classList.remove('hidden');
-                connectedDiv.classList.add('hidden');
-                walletAddressEl.textContent = '';
+                appSubtitle.textContent = 'Holders of the "Human" attestation can claim PASS tokens here.';
+            } else if (state === 'wrongNetwork') {
+                wrongNetworkDiv.classList.remove('hidden');
+                showMessage(`Please switch to a supported network.`, 'error');
+                appSubtitle.textContent = 'Wallet connected, but on the wrong network.';
+            } else if (state === 'connected') {
+                connectedDiv.classList.remove('hidden');
+                walletAddressEl.textContent = `${data.address.substring(0, 6)}...${data.address.substring(data.address.length - 4)}`;
+                networkNameEl.textContent = data.networkName;
+                appSubtitle.textContent = `Connected to ${data.networkName}`;
+                checkClaimStatusAndShowAmount();
+            }
+        }
+
+        async function checkClaimStatusAndShowAmount() {
+             if (!contract || !userAddress) return;
+             try {
+                // Check claim status first
+                const alreadyClaimed = await contract.hasClaimed(userAddress);
+                
+                if (alreadyClaimed) {
+                    showMessage("You have already claimed your tokens.", 'success');
+                    claimButton.disabled = true;
+                    claimButtonText.textContent = "Tokens Already Claimed";
+                } else {
+                    // Fetch the claim amount
+                    const amount = await contract.CLAIM_AMOUNT();
+                    const formattedAmount = ethers.formatEther(amount);
+                    showMessage(`You are eligible to claim ${formattedAmount} PASS tokens.`, 'info');
+                    claimButton.disabled = false;
+                    claimButtonText.textContent = `Claim ${formattedAmount} PASS`;
+                }
+
+            } catch (e) {
+                console.error("Could not fetch claim status/amount", e);
+                showMessage("Could not fetch claim details from contract.", 'error');
             }
         }
 
@@ -149,28 +236,86 @@
                 const accounts = await provider.send("eth_requestAccounts", []);
                 
                 if (accounts.length > 0) {
-                    signer = await provider.getSigner();
-                    const address = await signer.getAddress();
-                    contract = new ethers.Contract(contractAddress, contractABI, signer);
-                    updateUI(address);
-                    hideMessage();
-                    
-                    // Show current claim amount
-                    try {
-                        const amount = await contract.currentClaimAmount();
-                        const formattedAmount = ethers.formatEther(amount);
-                        showMessage(`Current claim amount: ${formattedAmount} PASS`, 'info');
-                    } catch (e) {
-                        console.error("Could not fetch claim amount", e);
-                    }
-
+                    await handleNetwork();
                 }
             } catch (err) {
                 console.error("Error connecting wallet:", err);
                 showMessage(err.message || "Failed to connect wallet.", 'error');
-                updateUI(null);
+                updateUI('disconnected');
             }
         }
+        
+        async function handleNetwork() {
+            try {
+                const network = await provider.getNetwork();
+                const chainId = network.chainId.toString();
+
+                if (supportedChainIds.includes(chainId)) {
+                    currentNetworkConfig = networkConfigs[chainId];
+                    signer = await provider.getSigner();
+                    userAddress = await signer.getAddress();
+                    contract = new ethers.Contract(currentNetworkConfig.contractAddress, contractABI, signer);
+                    
+                    updateUI('connected', {
+                        address: userAddress,
+                        networkName: currentNetworkConfig.chainName
+                    });
+                } else {
+                    updateUI('wrongNetwork');
+                }
+            } catch (err) {
+                console.error("Error handling network:", err);
+                showMessage(err.message || "Failed to get network details.", 'error');
+                updateUI('disconnected');
+            }
+        }
+        
+        async function switchNetwork(chainId) {
+            if (!provider) {
+                showMessage("Please connect your wallet first.", 'error');
+                return;
+            }
+
+            const config = networkConfigs[chainId];
+            if (!config) {
+                showMessage("Invalid network selected.", 'error');
+                return;
+            }
+            
+            try {
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: config.chainId }],
+                });
+                // handleNetwork() will be called automatically by the 'chainChanged' listener
+            } catch (switchError) {
+                // This error code indicates that the chain has not been added to MetaMask.
+                if (switchError.code === 4902) {
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [
+                                {
+                                    chainId: config.chainId,
+                                    chainName: config.chainName,
+                                    nativeCurrency: config.nativeCurrency,
+                                    rpcUrls: config.rpcUrls,
+                                    blockExplorerUrls: config.blockExplorerUrls,
+                                },
+                            ],
+                        });
+                        // handleNetwork() will be called automatically by the 'chainChanged' listener
+                    } catch (addError) {
+                        console.error("Failed to add network:", addError);
+                        showMessage("Failed to add the network to your wallet.", 'error');
+                    }
+                } else {
+                    console.error("Failed to switch network:", switchError);
+                    showMessage("Failed to switch network. Please try from your wallet.", 'error');
+                }
+            }
+        }
+
 
         async function handleClaim() {
             hideMessage();
@@ -184,27 +329,27 @@
             try {
                 showMessage("Sending transaction... Please approve in your wallet.", 'info');
 
-                // Call the claim() function with no arguments
                 const tx = await contract.claim();
                 
                 showMessage("Transaction sent! Waiting for confirmation...", 'info');
-                await tx.wait(); // Wait for the transaction to be mined
+                await tx.wait(); 
 
                 showMessage("Success! Your tokens have been claimed.", 'success');
+                // After success, update the button state
+                checkClaimStatusAndShowAmount();
 
             } catch (err) {
                 console.error("Claim failed:", err);
                 let friendlyMessage = err.message;
 
-                // Try to find the revert reason
                 if (err.reason) {
                     friendlyMessage = err.reason;
                 } else if (err.data && err.data.message) {
                     friendlyMessage = err.data.message;
                 }
                 
-                // Clean up common error messages
                 if (friendlyMessage.includes("Airdrop:")) {
+                    // Extract our custom revert reason
                     friendlyMessage = friendlyMessage.split("Airdrop:")[1].split("\"")[0].trim();
                 } else if (friendlyMessage.includes("user rejected transaction")) {
                     friendlyMessage = "You rejected the transaction in your wallet.";
@@ -219,18 +364,24 @@
         // --- Event Listeners ---
         connectButton.addEventListener('click', connectWallet);
         claimButton.addEventListener('click', handleClaim);
+        switchMainnetButton.addEventListener('click', () => switchNetwork('56'));
+        switchTestnetButton.addEventListener('click', () => switchNetwork('97'));
 
         if (typeof window.ethereum !== 'undefined') {
             window.ethereum.on('accountsChanged', (accounts) => {
                 if (accounts.length > 0) {
-                    connectWallet();
+                    connectWallet(); // Re-connect and re-check network
                 } else {
-                    updateUI(null);
+                    updateUI('disconnected');
                     showMessage("Wallet disconnected.", 'info');
                 }
+            });
+
+            window.ethereum.on('chainChanged', (chainId) => {
+                // When chain changes, re-run the network handling logic
+                connectWallet();
             });
         }
     </script>
 </body>
 </html>
-

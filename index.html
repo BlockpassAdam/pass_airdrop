@@ -30,7 +30,9 @@
 
     <div class="bg-gray-800 p-6 sm:p-8 rounded-2xl shadow-xl w-full max-w-lg">
         <h1 class="text-3xl font-bold text-center mb-2 text-blue-400">PASS Token Airdrop</h1>
-        <p class="text-center text-gray-400 mb-6">Claim your PASS tokens below.</p>
+        <p class="text-center text-gray-400 mb-6">
+            Holders of the "Human" attestation can claim PASS tokens here.
+        </p>
 
         <div id="message-box" class="hidden p-3 rounded-lg mb-4 text-center"></div>
 
@@ -46,26 +48,16 @@
                 Connected: <strong id="wallet-address" class="text-green-400 break-all"></strong>
             </p>
 
-            <form id="claim-form" class="space-y-4">
-                <div>
-                    <label for="amount" class="block text-sm font-medium text-gray-300 mb-1">Your Claim Amount (in smallest unit, e.g., wei)</label>
-                    <input type="text" id="amount" placeholder="e.g., 50000000000000000000"
-                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
+            <p class="text-gray-300 text-center">
+                Click the button below to claim your tokens. The contract will
+                automatically verify your attestation.
+            </p>
 
-                <div>
-                    <label for="proof" class="block text-sm font-medium text-gray-300 mb-1">Your Merkle Proof (JSON Array)</label>
-                    <textarea id="proof" rows="4"
-                        placeholder='[ "0x...", "0x..." ]'
-                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
-                </div>
-
-                <button type="submit" id="claim-button"
-                    class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center space-x-2">
-                    <span id="claim-button-text">Claim Tokens</span>
-                    <div id="claim-loader" class="loader hidden"></div>
-                </button>
-            </form>
+            <button id="claim-button"
+                class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center space-x-2">
+                <span id="claim-button-text">Claim Your Tokens</span>
+                <div id="claim-loader" class="loader hidden"></div>
+            </button>
         </div>
 
     </div>
@@ -73,17 +65,17 @@
     <script>
         // --- Contract & App Configuration ---
         // !! IMPORTANT: Replace with your deployed contract address
-        const contractAddress = "0x...YOUR_CONTRACT_ADDRESS_HERE";
+        const contractAddress = "0x...YOUR_NEW_CONTRACT_ADDRESS_HERE";
 
-        // Minimal ABI from your contract
+        // Minimal ABI from your new contract
         const contractABI = [
             "event Claim(address indexed user, uint256 amount, uint256 period)",
-            "function claim(uint256 _amount, bytes32[] calldata _merkleProof)"
+            "function claim()",
+            "function currentClaimAmount() view returns (uint256)"
         ];
 
         // --- DOM Elements ---
         const connectButton = document.getElementById('connect-button');
-        const claimForm = document.getElementById('claim-form');
         const claimButton = document.getElementById('claim-button');
         const claimButtonText = document.getElementById('claim-button-text');
         const claimLoader = document.getElementById('claim-loader');
@@ -91,9 +83,6 @@
         const disconnectedDiv = document.getElementById('wallet-disconnected');
         const connectedDiv = document.getElementById('wallet-connected');
         const walletAddressEl = document.getElementById('wallet-address');
-        
-        const amountInput = document.getElementById('amount');
-        const proofInput = document.getElementById('proof');
         const messageBox = document.getElementById('message-box');
 
         // --- App State ---
@@ -104,11 +93,6 @@
 
         // --- Helper Functions ---
         
-        /**
-         * Displays a message to the user.
-         * @param {string} message - The text to display.
-         * @param {'success' | 'error' | 'info'} type - The message type.
-         */
         function showMessage(message, type = 'info') {
             messageBox.textContent = message;
             messageBox.classList.remove('hidden', 'bg-green-800', 'bg-red-800', 'bg-blue-800');
@@ -139,10 +123,6 @@
             }
         }
 
-        /**
-         * Updates the UI based on wallet connection state.
-         * @param {string | null} address - The user's wallet address, or null if disconnected.
-         */
         function updateUI(address) {
             userAddress = address;
             if (address) {
@@ -158,9 +138,6 @@
 
         // --- Wallet & Contract Logic ---
 
-        /**
-         * Connects to the user's MetaMask (or other EIP-1193) wallet.
-         */
         async function connectWallet() {
             if (typeof window.ethereum === 'undefined') {
                 showMessage("MetaMask is not installed. Please install it to use this dApp.", 'error');
@@ -168,21 +145,25 @@
             }
 
             try {
-                // Ethers.js v6 syntax
                 provider = new ethers.BrowserProvider(window.ethereum);
-                
-                // Request account access
                 const accounts = await provider.send("eth_requestAccounts", []);
                 
                 if (accounts.length > 0) {
                     signer = await provider.getSigner();
                     const address = await signer.getAddress();
-                    
-                    // Instantiate the contract
                     contract = new ethers.Contract(contractAddress, contractABI, signer);
-                    
                     updateUI(address);
                     hideMessage();
+                    
+                    // Show current claim amount
+                    try {
+                        const amount = await contract.currentClaimAmount();
+                        const formattedAmount = ethers.formatEther(amount);
+                        showMessage(`Current claim amount: ${formattedAmount} PASS`, 'info');
+                    } catch (e) {
+                        console.error("Could not fetch claim amount", e);
+                    }
+
                 }
             } catch (err) {
                 console.error("Error connecting wallet:", err);
@@ -191,65 +172,35 @@
             }
         }
 
-        /**
-         * Handles the form submission to claim tokens.
-         */
-        async function handleClaim(event) {
-            event.preventDefault();
+        async function handleClaim() {
             hideMessage();
 
             if (!signer || !contract) {
                 showMessage("Wallet not connected.", 'error');
                 return;
             }
-
-            const amountStr = amountInput.value.trim();
-            const proofStr = proofInput.value.trim();
-
-            let amount;
-            let proof;
-
-            // 1. Validate Amount
-            try {
-                // Use BigInt for amounts
-                amount = BigInt(amountStr);
-            } catch (err) {
-                showMessage("Invalid amount. Please enter a valid number (in wei).", 'error');
-                return;
-            }
-
-            // 2. Validate Merkle Proof (JSON)
-            try {
-                proof = JSON.parse(proofStr);
-                if (!Array.isArray(proof) || !proof.every(item => typeof item === 'string' && item.startsWith('0x'))) {
-                    throw new Error();
-                }
-            } catch (err) {
-                showMessage("Invalid Merkle Proof. It must be a JSON array of 0x-prefixed strings.", 'error');
-                return;
-            }
             
-            // 3. Send Transaction
             setLoading(true);
             try {
                 showMessage("Sending transaction... Please approve in your wallet.", 'info');
 
-                const tx = await contract.claim(amount, proof);
+                // Call the claim() function with no arguments
+                const tx = await contract.claim();
                 
                 showMessage("Transaction sent! Waiting for confirmation...", 'info');
                 await tx.wait(); // Wait for the transaction to be mined
 
                 showMessage("Success! Your tokens have been claimed.", 'success');
-                claimForm.reset();
 
             } catch (err) {
                 console.error("Claim failed:", err);
-                // Try to get the revert reason
                 let friendlyMessage = err.message;
-                if (err.data && err.data.message) {
-                    friendlyMessage = err.data.message;
-                } else if (err.reason) {
+
+                // Try to find the revert reason
+                if (err.reason) {
                     friendlyMessage = err.reason;
+                } else if (err.data && err.data.message) {
+                    friendlyMessage = err.data.message;
                 }
                 
                 // Clean up common error messages
@@ -267,16 +218,13 @@
         
         // --- Event Listeners ---
         connectButton.addEventListener('click', connectWallet);
-        claimForm.addEventListener('submit', handleClaim);
+        claimButton.addEventListener('click', handleClaim);
 
-        // Optional: Listen for account changes
         if (typeof window.ethereum !== 'undefined') {
             window.ethereum.on('accountsChanged', (accounts) => {
                 if (accounts.length > 0) {
-                    // Re-initialize and update UI
                     connectWallet();
                 } else {
-                    // User disconnected
                     updateUI(null);
                     showMessage("Wallet disconnected.", 'info');
                 }
@@ -285,3 +233,4 @@
     </script>
 </body>
 </html>
+

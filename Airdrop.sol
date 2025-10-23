@@ -1,29 +1,51 @@
+// File: AirdropOnChain.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-// You will need to install OpenZeppelin contracts:
-// npm install @openzeppelin/contracts
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /**
- * @title Airdrop
- * @author Gemini
- * @notice A smart contract for distributing ERC20 tokens via a Merkle tree airdrop.
- * It allows a project owner to set a Merkle root for a specific claim period.
- * Eligible users can then provide a Merkle proof to claim their allotted tokens.
- * The contract enforces a monthly payout cap to control token velocity and allows
- * for the management of multiple claim periods.
+ * @title IBASRegistry
+ * @notice Interface for the BSC Attestation Service (BAS) Registry.
+ * This allows our contract to call the `isAttested` function.
+ * Mainnet: 0x085105151557a6908EAD812053A4700f13d8032e
+ * Testnet: 0x242D13567d1C2293311E6a9A3f26D07F81393669
  */
-contract Airdrop is Ownable {
+interface IBASRegistry {
+    /**
+     * @notice Checks if an address holds a valid (non-revoked, non-expired) attestation
+     * for a specific schema.
+     * @param _attester The address to check.
+     * @param _schemaId The schema to check against.
+     * @return bool True if the attestation exists and is valid, false otherwise.
+     */
+    function isAttested(address _attester, bytes32 _schemaId) external view returns (bool);
+}
+
+/**
+ * @title AirdropOnChain
+ * @author Gemini
+ * @notice This contract distributes ERC20 tokens to users who hold a specific
+ * BAS (BSC Attestation Service) attestation.
+ *
+ * It validates eligibility *on-chain* by calling the BAS Registry directly.
+ * This removes the need for an off-chain Merkle tree.
+ *
+ * It still includes a monthly payout cap and claim periods to manage token velocity
+ * as per the original specification.
+ */
+contract AirdropOnChain is Ownable {
     // --- State Variables ---
 
     /// @notice The ERC20 token being distributed.
     IERC20 public immutable passToken;
-
-    /// @notice The Merkle root for the current claim period.
-    bytes32 public merkleRoot;
+    
+    /// @notice The BAS Registry contract.
+    IBASRegistry public immutable basRegistry;
+    
+    /// @notice The Schema ID for the "Human" attestation.
+    bytes32 public immutable humanSchemaId;
 
     /// @notice The maximum number of tokens that can be claimed in a single month (in wei).
     uint256 public monthlyPayoutLimit;
@@ -34,91 +56,98 @@ contract Airdrop is Ownable {
     /// @notice The timestamp when the current monthly payout period started.
     uint256 public monthStartTime;
 
+    /// @notice The amount of tokens for a single claim in the current period.
+    uint256 public currentClaimAmount;
+
     /// @notice Tracks claims to prevent double-spending. Maps periodId => userAddress => hasClaimed.
     mapping(uint256 => mapping(address => bool)) public hasClaimed;
     
-    /// @notice The current claim period ID. Incremented with each new Merkle root.
+    /// @notice The current claim period ID. Incremented by the owner.
     uint256 public currentPeriod;
 
     // --- Events ---
     event Claim(address indexed user, uint256 amount, uint256 period);
-    event MerkleRootUpdated(bytes32 indexed newRoot, uint256 indexed period);
     event MonthlyLimitReset(uint256 timestamp);
     event TokensWithdrawn(address indexed token, address indexed to, uint256 amount);
-
+    event ClaimPeriodUpdated(uint256 indexed newPeriod, uint256 newClaimAmount);
 
     // --- Constructor ---
 
     /**
-     * @param _tokenAddress The address of the ERC20 token to be airdropped.
-     * @param _initialMerkleRoot The Merkle root for the first claim period.
-     * @param _monthlyPayoutLimit The initial monthly payout limit in token wei.
+     * @param _tokenAddress The address of the ERC20 token to be airdropped (PASS).
+     * @param _basRegistryAddress The address of the BAS Registry contract.
+     * @param _humanSchemaId The schemaId of the "Human" attestation.
+     * @param _monthlyPayoutLimit The initial monthly payout limit (in wei).
+     * @param _initialClaimAmount The claim amount for the first period (e.g., 50e18 for 50 tokens).
      */
     constructor(
         address _tokenAddress,
-        bytes32 _initialMerkleRoot,
-        uint256 _monthlyPayoutLimit
+        address _basRegistryAddress,
+        bytes32 _humanSchemaId,
+        uint256 _monthlyPayoutLimit,
+        uint256 _initialClaimAmount
     ) Ownable(msg.sender) {
         require(_tokenAddress != address(0), "Airdrop: Token address cannot be zero");
+        require(_basRegistryAddress != address(0), "Airdrop: Registry address cannot be zero");
+        
         passToken = IERC20(_tokenAddress);
-        merkleRoot = _initialMerkleRoot;
+        basRegistry = IBASRegistry(_basRegistryAddress);
+        humanSchemaId = _humanSchemaId;
         monthlyPayoutLimit = _monthlyPayoutLimit;
+        currentClaimAmount = _initialClaimAmount;
+        
         monthStartTime = block.timestamp;
         currentPeriod = 1; // Start with period 1
-        emit MerkleRootUpdated(_initialMerkleRoot, currentPeriod);
     }
 
-    // --- Public & External Functions ---
+    // --- Public Claim Function ---
 
     /**
-     * @notice Allows an eligible user to claim their tokens.
-     * @param _amount The amount of tokens to claim.
-     * @param _merkleProof The Merkle proof verifying the user's eligibility.
+     * @notice Allows a user to claim their tokens if they hold the required attestation.
+     * The contract checks eligibility on-chain.
      */
-    function claim(uint256 _amount, bytes32[] calldata _merkleProof) external {
-        // Check if the monthly payout period needs to be reset.
+    function claim() external {
+        // Check 1: Validate the user holds the required attestation *right now*.
+        require(basRegistry.isAttested(msg.sender, humanSchemaId), "Airdrop: Not attested");
+
+        // Check 2: Ensure the user hasn't already claimed in the current period.
+        require(!hasClaimed[currentPeriod][msg.sender], "Airdrop: Already claimed for this period");
+
+        // Check 3: Check if the monthly payout period needs to be reset.
         if (block.timestamp >= monthStartTime + 30 days) {
             _resetMonthlyPayout();
         }
 
-        // Check 1: Ensure the user hasn't already claimed in the current period.
-        require(!hasClaimed[currentPeriod][msg.sender], "Airdrop: Already claimed for this period");
-
-        // Check 2: Ensure the monthly payout limit has not been exceeded.
-        require(currentMonthPayout + _amount <= monthlyPayoutLimit, "Airdrop: Monthly payout limit exceeded");
-
-        // Check 3: Verify the Merkle proof.
-        // The leaf is a hash of the claimant's address and their claim amount.
-        bytes32 leaf = keccak256(abi.encodePacked(msg.sender, _amount));
-        require(MerkleProof.verify(_merkleProof, merkleRoot, leaf), "Airdrop: Invalid Merkle proof");
+        // Check 4: Ensure the monthly payout limit has not been exceeded.
+        uint256 claimAmount = currentClaimAmount; // Use local var for gas
+        require(currentMonthPayout + claimAmount <= monthlyPayoutLimit, "Airdrop: Monthly payout limit exceeded");
 
         // If all checks pass:
-        // 1. Mark the user as having claimed for the current period.
+        // 1. Mark the user as having claimed.
         hasClaimed[currentPeriod][msg.sender] = true;
 
         // 2. Update the monthly payout counter.
-        currentMonthPayout += _amount;
+        currentMonthPayout += claimAmount;
 
         // 3. Transfer the tokens to the user.
-        bool sent = passToken.transfer(msg.sender, _amount);
+        bool sent = passToken.transfer(msg.sender, claimAmount);
         require(sent, "Airdrop: Token transfer failed");
 
         // 4. Emit a claim event.
-        emit Claim(msg.sender, _amount, currentPeriod);
+        emit Claim(msg.sender, claimAmount, currentPeriod);
     }
-
 
     // --- Owner-Only Functions ---
 
     /**
-     * @notice Updates the Merkle root for a new claim period.
-     * This invalidates old proofs and starts a new airdrop cycle.
-     * @param _newRoot The new Merkle root.
+     * @notice Updates to a new claim period and sets the reward amount for that period.
+     * This allows the owner to taper rewards (e.g., 50, 25, 12.5 tokens).
+     * @param _newClaimAmount The new amount of tokens for a single claim.
      */
-    function updateClaimPeriod(bytes32 _newRoot) external onlyOwner {
+    function updateClaimPeriod(uint256 _newClaimAmount) external onlyOwner {
         currentPeriod++;
-        merkleRoot = _newRoot;
-        emit MerkleRootUpdated(_newRoot, currentPeriod);
+        currentClaimAmount = _newClaimAmount;
+        emit ClaimPeriodUpdated(currentPeriod, _newClaimAmount);
     }
     
     /**
@@ -131,8 +160,6 @@ contract Airdrop is Ownable {
 
     /**
      * @notice Manually resets the monthly payout counter and start time.
-     * The claim function automatically calls this if a month has passed,
-     * but this allows for manual override by the owner if needed.
      */
     function resetMonthlyPayout() external onlyOwner {
         _resetMonthlyPayout();
@@ -140,7 +167,6 @@ contract Airdrop is Ownable {
 
     /**
      * @notice Allows the owner to withdraw any remaining tokens from the contract.
-     * This is useful after the airdrop campaign has concluded.
      * @param _to The address to receive the withdrawn tokens.
      */
     function withdrawUnclaimedTokens(address _to) external onlyOwner {
@@ -162,3 +188,4 @@ contract Airdrop is Ownable {
         emit MonthlyLimitReset(block.timestamp);
     }
 }
+

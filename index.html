@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PASS Token Airdrop</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Ethers.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.1/ethers.umd.min.js"
+        xintegrity="sha512-V5SjQnfdXY8hDRMzehjsg0Fm5mQGSpBYyXqG9JZXnN/Scs+n1a9f-GSJ6T/G8h0L/FSjG9kvlQGAz6Kx/Gm+6w=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <style>
+        /* Simple loader animation */
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white font-sans min-h-screen flex items-center justify-center p-4">
+
+    <div class="bg-gray-800 p-6 sm:p-8 rounded-2xl shadow-xl w-full max-w-lg">
+        <h1 class="text-3xl font-bold text-center mb-2 text-blue-400">PASS Token Airdrop</h1>
+        <p class="text-center text-gray-400 mb-6">Claim your PASS tokens below.</p>
+
+        <div id="message-box" class="hidden p-3 rounded-lg mb-4 text-center"></div>
+
+        <div id="wallet-disconnected" class="">
+            <button id="connect-button"
+                class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
+                Connect Wallet
+            </button>
+        </div>
+
+        <div id="wallet-connected" class="hidden space-y-4">
+            <p class="text-center text-sm">
+                Connected: <strong id="wallet-address" class="text-green-400 break-all"></strong>
+            </p>
+
+            <form id="claim-form" class="space-y-4">
+                <div>
+                    <label for="amount" class="block text-sm font-medium text-gray-300 mb-1">Your Claim Amount (in smallest unit, e.g., wei)</label>
+                    <input type="text" id="amount" placeholder="e.g., 50000000000000000000"
+                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+
+                <div>
+                    <label for="proof" class="block text-sm font-medium text-gray-300 mb-1">Your Merkle Proof (JSON Array)</label>
+                    <textarea id="proof" rows="4"
+                        placeholder='[ "0x...", "0x..." ]'
+                        class="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+                </div>
+
+                <button type="submit" id="claim-button"
+                    class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center space-x-2">
+                    <span id="claim-button-text">Claim Tokens</span>
+                    <div id="claim-loader" class="loader hidden"></div>
+                </button>
+            </form>
+        </div>
+
+    </div>
+
+    <script>
+        // --- Contract & App Configuration ---
+        // !! IMPORTANT: Replace with your deployed contract address
+        const contractAddress = "0x...YOUR_CONTRACT_ADDRESS_HERE";
+
+        // Minimal ABI from your contract
+        const contractABI = [
+            "event Claim(address indexed user, uint256 amount, uint256 period)",
+            "function claim(uint256 _amount, bytes32[] calldata _merkleProof)"
+        ];
+
+        // --- DOM Elements ---
+        const connectButton = document.getElementById('connect-button');
+        const claimForm = document.getElementById('claim-form');
+        const claimButton = document.getElementById('claim-button');
+        const claimButtonText = document.getElementById('claim-button-text');
+        const claimLoader = document.getElementById('claim-loader');
+        
+        const disconnectedDiv = document.getElementById('wallet-disconnected');
+        const connectedDiv = document.getElementById('wallet-connected');
+        const walletAddressEl = document.getElementById('wallet-address');
+        
+        const amountInput = document.getElementById('amount');
+        const proofInput = document.getElementById('proof');
+        const messageBox = document.getElementById('message-box');
+
+        // --- App State ---
+        let provider;
+        let signer;
+        let contract;
+        let userAddress;
+
+        // --- Helper Functions ---
+        
+        /**
+         * Displays a message to the user.
+         * @param {string} message - The text to display.
+         * @param {'success' | 'error' | 'info'} type - The message type.
+         */
+        function showMessage(message, type = 'info') {
+            messageBox.textContent = message;
+            messageBox.classList.remove('hidden', 'bg-green-800', 'bg-red-800', 'bg-blue-800');
+            
+            if (type === 'success') {
+                messageBox.classList.add('bg-green-800', 'text-green-200');
+            } else if (type === 'error') {
+                messageBox.classList.add('bg-red-800', 'text-red-200');
+            } else {
+                messageBox.classList.add('bg-blue-800', 'text-blue-200');
+            }
+            messageBox.classList.remove('hidden');
+        }
+
+        function hideMessage() {
+            messageBox.classList.add('hidden');
+        }
+
+        function setLoading(isLoading) {
+            if (isLoading) {
+                claimButton.disabled = true;
+                claimButtonText.classList.add('hidden');
+                claimLoader.classList.remove('hidden');
+            } else {
+                claimButton.disabled = false;
+                claimButtonText.classList.remove('hidden');
+                claimLoader.classList.add('hidden');
+            }
+        }
+
+        /**
+         * Updates the UI based on wallet connection state.
+         * @param {string | null} address - The user's wallet address, or null if disconnected.
+         */
+        function updateUI(address) {
+            userAddress = address;
+            if (address) {
+                disconnectedDiv.classList.add('hidden');
+                connectedDiv.classList.remove('hidden');
+                walletAddressEl.textContent = `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
+            } else {
+                disconnectedDiv.classList.remove('hidden');
+                connectedDiv.classList.add('hidden');
+                walletAddressEl.textContent = '';
+            }
+        }
+
+        // --- Wallet & Contract Logic ---
+
+        /**
+         * Connects to the user's MetaMask (or other EIP-1193) wallet.
+         */
+        async function connectWallet() {
+            if (typeof window.ethereum === 'undefined') {
+                showMessage("MetaMask is not installed. Please install it to use this dApp.", 'error');
+                return;
+            }
+
+            try {
+                // Ethers.js v6 syntax
+                provider = new ethers.BrowserProvider(window.ethereum);
+                
+                // Request account access
+                const accounts = await provider.send("eth_requestAccounts", []);
+                
+                if (accounts.length > 0) {
+                    signer = await provider.getSigner();
+                    const address = await signer.getAddress();
+                    
+                    // Instantiate the contract
+                    contract = new ethers.Contract(contractAddress, contractABI, signer);
+                    
+                    updateUI(address);
+                    hideMessage();
+                }
+            } catch (err) {
+                console.error("Error connecting wallet:", err);
+                showMessage(err.message || "Failed to connect wallet.", 'error');
+                updateUI(null);
+            }
+        }
+
+        /**
+         * Handles the form submission to claim tokens.
+         */
+        async function handleClaim(event) {
+            event.preventDefault();
+            hideMessage();
+
+            if (!signer || !contract) {
+                showMessage("Wallet not connected.", 'error');
+                return;
+            }
+
+            const amountStr = amountInput.value.trim();
+            const proofStr = proofInput.value.trim();
+
+            let amount;
+            let proof;
+
+            // 1. Validate Amount
+            try {
+                // Use BigInt for amounts
+                amount = BigInt(amountStr);
+            } catch (err) {
+                showMessage("Invalid amount. Please enter a valid number (in wei).", 'error');
+                return;
+            }
+
+            // 2. Validate Merkle Proof (JSON)
+            try {
+                proof = JSON.parse(proofStr);
+                if (!Array.isArray(proof) || !proof.every(item => typeof item === 'string' && item.startsWith('0x'))) {
+                    throw new Error();
+                }
+            } catch (err) {
+                showMessage("Invalid Merkle Proof. It must be a JSON array of 0x-prefixed strings.", 'error');
+                return;
+            }
+            
+            // 3. Send Transaction
+            setLoading(true);
+            try {
+                showMessage("Sending transaction... Please approve in your wallet.", 'info');
+
+                const tx = await contract.claim(amount, proof);
+                
+                showMessage("Transaction sent! Waiting for confirmation...", 'info');
+                await tx.wait(); // Wait for the transaction to be mined
+
+                showMessage("Success! Your tokens have been claimed.", 'success');
+                claimForm.reset();
+
+            } catch (err) {
+                console.error("Claim failed:", err);
+                // Try to get the revert reason
+                let friendlyMessage = err.message;
+                if (err.data && err.data.message) {
+                    friendlyMessage = err.data.message;
+                } else if (err.reason) {
+                    friendlyMessage = err.reason;
+                }
+                
+                // Clean up common error messages
+                if (friendlyMessage.includes("Airdrop:")) {
+                    friendlyMessage = friendlyMessage.split("Airdrop:")[1].split("\"")[0].trim();
+                } else if (friendlyMessage.includes("user rejected transaction")) {
+                    friendlyMessage = "You rejected the transaction in your wallet.";
+                }
+
+                showMessage(`Claim failed: ${friendlyMessage}`, 'error');
+            } finally {
+                setLoading(false);
+            }
+        }
+        
+        // --- Event Listeners ---
+        connectButton.addEventListener('click', connectWallet);
+        claimForm.addEventListener('submit', handleClaim);
+
+        // Optional: Listen for account changes
+        if (typeof window.ethereum !== 'undefined') {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                if (accounts.length > 0) {
+                    // Re-initialize and update UI
+                    connectWallet();
+                } else {
+                    // User disconnected
+                    updateUI(null);
+                    showMessage("Wallet disconnected.", 'info');
+                }
+            });
+        }
+    </script>
+</body>
+</html>

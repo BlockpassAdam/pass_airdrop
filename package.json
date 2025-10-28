@@ -1,0 +1,25 @@
+{
+  "name": "pass_airdrop",
+  "version": "1.0.0",
+  "description": "This project implements a simple, one-time airdrop system for distributing PASS tokens. This version uses **on-chain validation** to verify a user's eligibility when they try to claim.",
+  "main": "hardhat.config.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BlockpassAdam/pass_airdrop.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/BlockpassAdam/pass_airdrop/issues"
+  },
+  "homepage": "https://github.com/BlockpassAdam/pass_airdrop#readme",
+  "dependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.1.0",
+    "@openzeppelin/contracts": "^5.4.0",
+    "dotenv": "^17.2.3"
+  }
+}

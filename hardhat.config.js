@@ -1,11 +1,13 @@
 // File: hardhat.config.js
 import "@nomicfoundation/hardhat-toolbox";
 import "dotenv/config";
+// Remove or comment out task import if it exists:
+// import "./scripts/deploy-airdrop.js";
 
 /** @type import('hardhat/config').HardhatUserConfig */
 export default {
   solidity: {
-    version: "0.8.19", // This MUST match your contract pragma
+    version: "0.8.20", // Matches updated contract and OpenZeppelin deps
     settings: {
       optimizer: {
         enabled: true,
@@ -28,11 +30,10 @@ export default {
     },
   },
   etherscan: {
-    // This single API key is read from your .env file
+    // Your single API key from BscScan/Etherscan, read from .env
     apiKey: process.env.BSCSCAN_API_KEY,
-    
-    // This customChains array tells Hardhat how to map your network
-    // names to BscScan's API endpoints
+
+    // Add this to map your networks to BscScan
     customChains: [
       {
         network: "bscMainnet",

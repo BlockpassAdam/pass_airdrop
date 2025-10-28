@@ -40,16 +40,12 @@ contract AirdropSimple is Ownable {
 
     // The ERC20 token being airdropped (PASS Token)
     IERC20 public immutable passToken;
-    
     // The BAS Registry contract
     IBASRegistry public immutable basRegistry;
-    
     // The Schema ID for the "Human" attestation
     bytes32 public immutable humanSchemaId;
-    
     // The fixed, one-time amount of tokens a user can claim
     uint256 public immutable CLAIM_AMOUNT;
-
     // Mapping to track which addresses have already claimed
     mapping(address => bool) public hasClaimed;
 
@@ -61,7 +57,6 @@ contract AirdropSimple is Ownable {
      * @param amount The amount of tokens claimed.
      */
     event Claim(address indexed user, uint256 amount);
-
     /**
      * @notice Emitted when the owner withdraws remaining tokens.
      * @param token The address of the token (PASS).

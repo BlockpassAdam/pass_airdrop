@@ -4,11 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PASS Token Airdrop</title>
-    <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Load Ethers.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.1/ethers.umd.min.js"
-        xintegrity="sha512-V5SjQnfdXY8hDRMzehjsg0Fm5mQGSpBYyXqG9JZXnN/Scs+n1a9f-GSJ6T/G8h0L/FSjG9kvlQGAz6Kx/Gm+6w=="
+        integrity="sha512-V5SjQnfdXY8hDRMzehjsg0Fm5mQGSpBYyXqG9JZXnN/Scs+n1a9f-GSJ6T/G8h0L/FSjG9kvlQGAz6Kx/Gm+6w=="
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <style>
         /* Simple loader animation */
@@ -36,7 +34,6 @@
 
         <div id="message-box" class="hidden p-3 rounded-lg mb-4 text-center"></div>
 
-        <!-- Initial state: Wallet not connected -->
         <div id="wallet-disconnected">
             <button id="connect-button"
                 class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-300 ease-in-out transform hover:scale-105">
@@ -44,7 +41,6 @@
             </button>
         </div>
 
-        <!-- State: Wallet connected, but on wrong network -->
         <div id="wrong-network" class="hidden text-center space-y-4">
             <p class="font-semibold text-red-400">Wrong Network Detected</p>
             <p class="text-gray-300">Please switch your wallet to one of the supported networks:</p>
@@ -60,7 +56,6 @@
             </div>
         </div>
 
-        <!-- State: Wallet connected and on correct network -->
         <div id="wallet-connected" class="hidden space-y-4">
             <div class="text-center text-sm">
                 <p>
